@@ -105,10 +105,9 @@ export function toCardInfo(json: any): A2aAgentCardInfo {
         .map(([name, scheme]) => ({
             name, kind: schemeKind(name, scheme), acceptsSecret: acceptsSecret(scheme), location: apiKeyLocation(scheme),
         }));
-    // v1.0 wraps each requirement as {"schemes": {name: {"list": [...]}}}; earlier cards list {name: [...]} under
-    // `security`.
-    const requirements: any[] = Array.isArray(json?.securityRequirements) ? json.securityRequirements
-        : Array.isArray(json?.security) ? json.security : [];
+    // v1.0 wraps each requirement as {"schemes": {name: {"list": [...]}}}; the flat {name: [...]} form is read too.
+    // Only `securityRequirements` is read, as a2a:Client reads it (`parseSecurityRequirements`).
+    const requirements: any[] = Array.isArray(json?.securityRequirements) ? json.securityRequirements : [];
     const { requiredSchemes, anonymousAllowed } = chooseSecurityAlternative(requirements);
     const skills: A2aSkillInfo[] = (Array.isArray(json?.skills) ? json.skills : []).map((s: any) => ({
         id: String(s?.id ?? ""),

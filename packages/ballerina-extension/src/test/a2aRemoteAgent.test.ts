@@ -69,7 +69,8 @@ describe("a2a remote agent helpers", () => {
 
         it.each([
             ["a v1.0 requirement", { securityRequirements: [{ schemes: { bearer: { list: [] } } }] }, ["bearer"]],
-            ["an earlier card's requirement", { security: [{ gw: [] }] }, ["gw"]],
+            ["a flat requirement", { securityRequirements: [{ gw: [] }] }, ["gw"]],
+            ["the pre-1.0 security field, which the A2A client ignores", { security: [{ gw: [] }] }, []],
             ["the first alternative that names one scheme", { securityRequirements: [{ schemes: { a: {} } }, { schemes: { b: {} } }] }, ["a"]],
             ["a single scheme after a pair", { securityRequirements: [{ schemes: { a: {}, b: {} } }, { schemes: { c: {} } }] }, ["c"]],
             ["a pair with an anonymous alternative", { securityRequirements: [{ schemes: { a: {}, b: {} } }, { schemes: {} }] }, []],
