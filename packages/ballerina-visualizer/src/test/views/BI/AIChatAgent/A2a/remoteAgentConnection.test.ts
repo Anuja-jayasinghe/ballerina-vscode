@@ -21,14 +21,21 @@ import {
     credentialCheck, identifiersIn, isEmptyRecord, quoteBareUrl,
 } from "../../../../../views/BI/AIChatAgent/A2a/remoteAgentConnection";
 
-const card = (requiredSchemes: string[], kind = "Bearer", acceptsSecret = true): A2aAgentCardInfo => ({
-    name: "Weather Agent", description: "", version: "1.0.0", protocolBindings: ["HTTP+JSON"],
+const card = (requiredSchemes: string[], kind = "Bearer", acceptsSecret = true, anonymousAllowed = false): A2aAgentCardInfo => ({
+    name: "Weather Agent", description: "", version: "1.0.0", protocolBindings: ["HTTP+JSON"], legacyCard: false,
     streaming: false, pushNotifications: false, extendedAgentCard: false,
     securitySchemes: requiredSchemes.map((name) => ({ name, kind, acceptsSecret })),
-    requiredSchemes, inputModes: [], outputModes: [], skills: [],
+    requiredSchemes, anonymousAllowed, inputModes: [], outputModes: [], skills: [],
 });
 
 describe("the credential a remote agent's card asks for, given in Client Config", () => {
+    it("doesn't require a credential when the card also accepts calls without one", () => {
+        const check = credentialCheck(card(["bearer"], "Bearer", true, true), { clientConfig: "" });
+        expect(check.problem).toBeUndefined();
+        expect(check.notice).toContain("without a credential");
+        expect(check.needsClientConfig).toBe(true);
+    });
+
     const empty = ["", "{}", "{\n\n}"];
 
     it.each([

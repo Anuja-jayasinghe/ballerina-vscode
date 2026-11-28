@@ -84,6 +84,11 @@ function Capability({ label, on }: { label: string; on: boolean }) {
     return <CapabilityItem on={on} aria-label={`${label}: ${on ? "available" : "not available"}`}>{label}</CapabilityItem>;
 }
 
+// The card's binding names, as people write them
+function bindingLabel(binding?: string): string | undefined {
+    return binding === "JSONRPC" ? "JSON-RPC" : binding;
+}
+
 export interface AgentCardViewProps {
     card?: A2aAgentCardInfo;
     loading: boolean;
@@ -145,7 +150,7 @@ export function AgentCardView({ card, loading, error, unsupported, problem, noti
                             <Value>
                                 {card.endpointUrl}
                                 <Muted>
-                                    {[card.protocolBinding, card.protocolVersion && `A2A ${card.protocolVersion}`]
+                                    {[bindingLabel(card.protocolBinding), card.protocolVersion && `A2A ${card.protocolVersion}`]
                                         .filter(Boolean).join(" · ")}
                                 </Muted>
                             </Value>
@@ -166,6 +171,7 @@ export function AgentCardView({ card, loading, error, unsupported, problem, noti
                                 {card.requiredSchemes.length === 0 ? "None required" : card.requiredSchemes
                                     .map((name) => card.securitySchemes.find((s) => s.name === name)?.kind ?? name)
                                     .join(", ")}
+                                {card.requiredSchemes.length > 0 && card.anonymousAllowed && <Muted>Optional</Muted>}
                             </Value>
                         </Row>
                         {(card.inputModes.length > 0 || card.outputModes.length > 0) && (

@@ -147,20 +147,30 @@ export interface A2aAgentCardInfo {
     version: string;
     provider?: string;
     documentationUrl?: string;
+    /** The interface `a2a:Client` takes: the first in card order that is JSON-RPC or HTTP+JSON for A2A 1.0. */
     endpointUrl?: string;
     protocolBinding?: string;
     protocolVersion?: string;
     /** Every protocol binding the card lists, such as `HTTP+JSON` or `JSONRPC`. */
     protocolBindings: string[];
+    /**
+     * Whether the card declares its transports the pre-1.0 way (`preferredTransport`, `additionalInterfaces` or a bare
+     * top-level `url`), which `ballerina/a2a` refuses.
+     */
+    legacyCard: boolean;
     streaming: boolean;
     pushNotifications: boolean;
     extendedAgentCard: boolean;
     securitySchemes: A2aSecuritySchemeInfo[];
     /**
-     * The schemes the card's first security requirement names, which a caller must satisfy together. Empty when the
-     * card asks for no credential. `ai:A2aToolKit` files its one `secret` under the single scheme named here.
+     * The security alternative `ai:A2aToolKit` takes, as the schemes it names. The card's requirements are alternatives
+     * and the schemes inside one are needed together, so this is the first alternative that names one scheme; when
+     * none does and none is anonymous, the first that names several (which the toolkit refuses). Empty when the card
+     * asks for no credential.
      */
     requiredSchemes: string[];
+    /** Whether one of the card's security alternatives is empty, so the agent can be called without a credential. */
+    anonymousAllowed: boolean;
     inputModes: string[];
     outputModes: string[];
     skills: A2aSkillInfo[];
@@ -181,7 +191,7 @@ export interface A2aCardFetchResponse {
     fromJson?: boolean;
     /** A suggested name for the toolkit variable, derived from the card name. */
     toolkitName?: string;
-    /** Set when the toolkit cannot call the agent, such as a card that lists no HTTP+JSON interface. */
+    /** Set when the toolkit cannot call the agent, such as a card with no JSON-RPC or HTTP+JSON interface for A2A 1.0. */
     unsupported?: string;
     /**
      * Set when the agent asked for credentials to serve its card (HTTP 401 or 403), as a gateway in front of it may.

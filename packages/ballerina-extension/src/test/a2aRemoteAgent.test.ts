@@ -70,7 +70,10 @@ describe("a2a remote agent helpers", () => {
         it.each([
             ["a v1.0 requirement", { securityRequirements: [{ schemes: { bearer: { list: [] } } }] }, ["bearer"]],
             ["an earlier card's requirement", { security: [{ gw: [] }] }, ["gw"]],
-            ["only the first of several alternatives", { securityRequirements: [{ schemes: { a: {} } }, { schemes: { b: {} } }] }, ["a"]],
+            ["the first alternative that names one scheme", { securityRequirements: [{ schemes: { a: {} } }, { schemes: { b: {} } }] }, ["a"]],
+            ["a single scheme after a pair", { securityRequirements: [{ schemes: { a: {}, b: {} } }, { schemes: { c: {} } }] }, ["c"]],
+            ["a pair with an anonymous alternative", { securityRequirements: [{ schemes: { a: {}, b: {} } }, { schemes: {} }] }, []],
+            ["only a pair", { securityRequirements: [{ schemes: { a: {}, b: {} } }] }, ["a", "b"]],
             ["no requirement", {}, []],
         ])("reads the schemes a caller must satisfy from %s", (_label, extra, expected) => {
             expect(toCardInfo({ ...weatherCard, ...extra }).requiredSchemes).toEqual(expected);
@@ -96,6 +99,19 @@ describe("a2a remote agent helpers", () => {
                 securityRequirements: [{ schemes: { key: { list: [] } } }],
             });
             expect(unsupportedReason(info)).toContain(`API key in the ${location}`);
+        });
+
+        it("knows when a card can be called without a credential", () => {
+            expect(toCardInfo({ ...weatherCard, securityRequirements: [{ schemes: { a: {} } }, { schemes: {} }] }).anonymousAllowed)
+                .toBe(true);
+            expect(toCardInfo({ ...weatherCard, securityRequirements: [{ schemes: { a: {} } }] }).anonymousAllowed).toBe(false);
+        });
+
+        it("accepts a card whose pair of schemes has a single-scheme alternative", () => {
+            const info = toCardInfo({
+                ...weatherCard, securityRequirements: [{ schemes: { key: {}, token: {} } }, { schemes: { token: {} } }],
+            });
+            expect(unsupportedReason(info)).toBeUndefined();
         });
 
         it("refuses a card that asks for several credentials together, which one secret can't satisfy", () => {
@@ -147,22 +163,48 @@ describe("a2a remote agent helpers", () => {
             expect((await fetchAgentCard("{}")).error).toContain("no name");
         });
 
-        it("flags a card with no HTTP+JSON interface", async () => {
-            const card = { ...weatherCard, supportedInterfaces: [{ protocolBinding: "JSONRPC", url: "http://h/rpc" }] };
-            const result = await fetchAgentCard("http://h", {}, jest.fn().mockResolvedValue(response(200, card)));
-            expect(result.card).toBeDefined();
-            expect(result.unsupported).toContain("JSONRPC");
-            expect(result.unsupported).toContain("HTTP+JSON");
+        const fetched = async (supportedInterfaces: unknown[]) =>
+            fetchAgentCard("http://h", {}, jest.fn().mockResolvedValue(response(200, { ...weatherCard, supportedInterfaces })));
+
+        it("accepts a card that offers only JSON-RPC", async () => {
+            const result = await fetched([{ protocolBinding: "JSONRPC", url: "http://h/rpc", protocolVersion: "1.0" }]);
+            expect(result.unsupported).toBeUndefined();
+            expect(result.card).toMatchObject({ endpointUrl: "http://h/rpc", protocolBinding: "JSONRPC" });
         });
 
-        it("does not flag a card that lists JSON-RPC and HTTP+JSON", async () => {
-            const card = {
-                ...weatherCard,
-                supportedInterfaces: [{ protocolBinding: "JSONRPC", url: "http://h/rpc" }, { protocolBinding: "HTTP+JSON", url: "http://h/rest" }],
-            };
-            const result = await fetchAgentCard("http://h", {}, jest.fn().mockResolvedValue(response(200, card)));
+        it.each([
+            ["JSON-RPC first", [{ protocolBinding: "JSONRPC", url: "http://h/rpc" }, { protocolBinding: "HTTP+JSON", url: "http://h/rest" }], "http://h/rpc"],
+            ["HTTP+JSON first", [{ protocolBinding: "HTTP+JSON", url: "http://h/rest" }, { protocolBinding: "JSONRPC", url: "http://h/rpc" }], "http://h/rest"],
+            ["gRPC before HTTP+JSON", [{ protocolBinding: "GRPC", url: "h:50051" }, { protocolBinding: "HTTP+JSON", url: "http://h/rest" }], "http://h/rest"],
+            ["JSON-RPC 0.3 before HTTP+JSON 1.0", [
+                { protocolBinding: "JSONRPC", url: "http://h/v03", protocolVersion: "0.3" },
+                { protocolBinding: "HTTP+JSON", url: "http://h/rest", protocolVersion: "1.0" },
+            ], "http://h/rest"],
+        ])("takes the interface the A2A client takes, in card order: %s", async (_label, interfaces, url) => {
+            const result = await fetched(interfaces);
             expect(result.unsupported).toBeUndefined();
-            expect(result.card?.endpointUrl).toBe("http://h/rest");
+            expect(result.card?.endpointUrl).toBe(url);
+        });
+
+        it.each([
+            ["only gRPC", [{ protocolBinding: "GRPC", url: "h:50051" }], "GRPC"],
+            ["only JSON-RPC for A2A 0.3", [{ protocolBinding: "JSONRPC", url: "http://h/rpc", protocolVersion: "0.3" }], "JSONRPC"],
+            ["no interface", [], "none"],
+        ])("refuses a card that offers %s", async (_label, interfaces, offered) => {
+            const result = await fetched(interfaces);
+            expect(result.unsupported).toContain("no JSON-RPC or HTTP+JSON interface for A2A 1.0");
+            expect(result.unsupported).toContain(offered);
+        });
+
+        it.each([
+            ["preferredTransport", { url: "http://h", preferredTransport: "JSONRPC" }],
+            ["additionalInterfaces", { url: "http://h", additionalInterfaces: [{ transport: "HTTP+JSON", url: "http://h/rest" }] }],
+            ["a top-level url", { url: "http://h" }],
+        ])("refuses a card from before A2A 1.0 (%s)", async (_label, legacy) => {
+            const { supportedInterfaces: _s, ...rest } = weatherCard;
+            const card = { ...rest, ...legacy };
+            const result = await fetchAgentCard("http://h", {}, jest.fn().mockResolvedValue(response(200, card)));
+            expect(result.unsupported).toContain("before A2A 1.0");
         });
     });
 });

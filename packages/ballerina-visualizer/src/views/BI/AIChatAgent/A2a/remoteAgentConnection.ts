@@ -101,6 +101,14 @@ export function credentialCheck(card: A2aAgentCardInfo, values: CredentialValues
     if (sets(values.clientConfig, expected.field) || (scheme.acceptsSecret && secretGiven)) {
         return { needsClientConfig: true };
     }
+    // The card also offers an alternative with no credential, so the toolkit can call the agent without one
+    if (card.anonymousAllowed) {
+        return {
+            notice: `This agent can be called without a credential, or with ${kind}: to use ${kind}, set it in Client `
+                + `Config, for example ${expected.example}.`,
+            needsClientConfig: true,
+        };
+    }
     return {
         problem: `This agent requires ${kind}. Set it in Client Config, for example ${expected.example}.`,
         needsClientConfig: true,

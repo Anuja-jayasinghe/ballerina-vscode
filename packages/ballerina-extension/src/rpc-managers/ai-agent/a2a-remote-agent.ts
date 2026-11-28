@@ -25,7 +25,10 @@ import { A2aAgentCardInfo, A2aCardFetchResponse, A2aSecuritySchemeInfo, A2aSkill
 
 const WELL_KNOWN = "/.well-known/agent-card.json";
 const FETCH_TIMEOUT_MS = 8000;
+// The bindings `a2a:Client` speaks, compared exactly as its `selectClientBinding` compares them
+const JSONRPC = "JSONRPC";
 const HTTP_JSON = "HTTP+JSON";
+const A2A_PROTOCOL_VERSION = "1.0";
 
 /** The agent's base URL: the source without a query, fragment, trailing slash or `/.well-known/...` suffix. */
 export function toBaseUrl(source: string): string {
@@ -95,7 +98,7 @@ function apiKeyLocation(scheme: any): string | undefined {
 /** Reads the fields the form shows from an Agent Card, v1.0 or earlier. */
 export function toCardInfo(json: any): A2aAgentCardInfo {
     const interfaces: any[] = Array.isArray(json?.supportedInterfaces) ? json.supportedInterfaces : [];
-    const preferred = interfaces.find((i) => isHttpJson(i?.protocolBinding)) ?? interfaces[0];
+    const chosen = clientInterface(interfaces);
     const caps = json?.capabilities ?? {};
     const schemes = json?.securitySchemes && typeof json.securitySchemes === "object" ? json.securitySchemes : {};
     const securitySchemes: A2aSecuritySchemeInfo[] = Object.entries(schemes)
@@ -103,12 +106,10 @@ export function toCardInfo(json: any): A2aAgentCardInfo {
             name, kind: schemeKind(name, scheme), acceptsSecret: acceptsSecret(scheme), location: apiKeyLocation(scheme),
         }));
     // v1.0 wraps each requirement as {"schemes": {name: {"list": [...]}}}; earlier cards list {name: [...]} under
-    // `security`. Only the first requirement is read, as ai:A2aToolKit does.
+    // `security`.
     const requirements: any[] = Array.isArray(json?.securityRequirements) ? json.securityRequirements
         : Array.isArray(json?.security) ? json.security : [];
-    const first = requirements[0];
-    const firstSchemes = first?.schemes && typeof first.schemes === "object" ? first.schemes : first;
-    const requiredSchemes = firstSchemes && typeof firstSchemes === "object" ? Object.keys(firstSchemes) : [];
+    const { requiredSchemes, anonymousAllowed } = chooseSecurityAlternative(requirements);
     const skills: A2aSkillInfo[] = (Array.isArray(json?.skills) ? json.skills : []).map((s: any) => ({
         id: String(s?.id ?? ""),
         name: String(s?.name ?? s?.id ?? ""),
@@ -122,32 +123,91 @@ export function toCardInfo(json: any): A2aAgentCardInfo {
         version: String(json?.version ?? ""),
         provider: json?.provider?.organization ? String(json.provider.organization) : undefined,
         documentationUrl: json?.documentationUrl ? String(json.documentationUrl) : undefined,
-        endpointUrl: preferred?.url ?? json?.url,
-        protocolBinding: preferred?.protocolBinding,
-        protocolVersion: preferred?.protocolVersion ?? json?.protocolVersion,
+        endpointUrl: chosen?.url ? String(chosen.url) : undefined,
+        protocolBinding: chosen?.protocolBinding ? String(chosen.protocolBinding) : undefined,
+        protocolVersion: chosen?.protocolVersion ? String(chosen.protocolVersion) : undefined,
         protocolBindings: interfaces.map((i) => String(i?.protocolBinding ?? "")).filter(Boolean),
+        legacyCard: isLegacyCard(json, interfaces),
         streaming: caps.streaming === true,
         pushNotifications: caps.pushNotifications === true,
         extendedAgentCard: caps.extendedAgentCard === true,
         securitySchemes,
         requiredSchemes,
+        anonymousAllowed,
         inputModes: asStrings(json?.defaultInputModes),
         outputModes: asStrings(json?.defaultOutputModes),
         skills,
     };
 }
 
-function isHttpJson(binding: unknown): boolean {
-    return String(binding ?? "").toUpperCase().replace(/\s+/g, "").includes(HTTP_JSON);
+/**
+ * The interface `a2a:Client` speaks to, as its `selectClientBinding` picks it: the first in card order whose binding is
+ * JSON-RPC or HTTP+JSON and that declares A2A 1.0 or no version. The toolkit passes no preferred binding, so the card's
+ * order decides (A2A specification 8.3.2).
+ */
+export function clientInterface(interfaces: any[]): any | undefined {
+    return interfaces.find((i) => {
+        const binding = i?.protocolBinding;
+        const version = i?.protocolVersion;
+        return (binding === JSONRPC || binding === HTTP_JSON)
+            && (version === undefined || version === null || version === A2A_PROTOCOL_VERSION);
+    });
 }
 
 /**
- * Why `ai:A2aToolKit` cannot call the agent, or undefined when it can. The toolkit speaks the HTTP+JSON binding, so
- * a card that lists interfaces but none of them HTTP+JSON is an agent it cannot reach.
+ * Whether the card declares its transports the pre-1.0 way, as `ballerina/a2a`'s `isLegacyCard` decides it: no
+ * `supportedInterfaces`, and `preferredTransport`, `additionalInterfaces` or a top-level `url` instead.
+ */
+function isLegacyCard(json: any, interfaces: any[]): boolean {
+    if (interfaces.length > 0 || !json || typeof json !== "object") {
+        return false;
+    }
+    return "preferredTransport" in json || "additionalInterfaces" in json || "url" in json;
+}
+
+/**
+ * The security alternative `ai:A2aToolKit` takes. The card's requirements are alternatives and the schemes inside one
+ * are needed together, so a single credential satisfies the first alternative that names one scheme. An empty
+ * alternative lets the agent be called without a credential. When no alternative names one scheme and none is empty,
+ * the first that names several is returned, which the toolkit refuses.
+ */
+export function chooseSecurityAlternative(requirements: any[]): { requiredSchemes: string[]; anonymousAllowed: boolean } {
+    let single: string | undefined;
+    let together: string[] | undefined;
+    let anonymousAllowed = false;
+    for (const requirement of requirements) {
+        const schemes = requirement?.schemes && typeof requirement.schemes === "object" ? requirement.schemes : requirement;
+        const names = schemes && typeof schemes === "object" ? Object.keys(schemes) : [];
+        if (names.length === 1) {
+            single = single ?? names[0];
+        } else if (names.length === 0) {
+            anonymousAllowed = true;
+        } else {
+            together = together ?? names;
+        }
+    }
+    if (single) {
+        return { requiredSchemes: [single], anonymousAllowed };
+    }
+    if (!anonymousAllowed && together) {
+        return { requiredSchemes: together, anonymousAllowed };
+    }
+    return { requiredSchemes: [], anonymousAllowed };
+}
+
+/**
+ * Why `ai:A2aToolKit` cannot call the agent, or undefined when it can. It speaks JSON-RPC and HTTP+JSON for A2A 1.0
+ * through `a2a:Client`, which refuses a pre-1.0 card and a card with no such interface.
  */
 export function unsupportedReason(card: A2aAgentCardInfo): string | undefined {
-    if (card.protocolBindings.length > 0 && !card.protocolBindings.some(isHttpJson)) {
-        return `This agent only offers ${card.protocolBindings.join(", ")}. The A2A toolkit calls agents over HTTP+JSON.`;
+    if (card.legacyCard) {
+        return "This agent's card is in the format from before A2A 1.0 (it has no supportedInterfaces). The A2A toolkit "
+            + "calls agents that publish an A2A 1.0 card.";
+    }
+    if (!card.endpointUrl) {
+        const offered = card.protocolBindings.length > 0 ? card.protocolBindings.join(", ") : "none";
+        return `This agent offers no JSON-RPC or HTTP+JSON interface for A2A 1.0 (it offers: ${offered}). The A2A `
+            + "toolkit calls agents over those two.";
     }
     const required = card.requiredSchemes.length === 1
         ? card.securitySchemes.find((s) => s.name === card.requiredSchemes[0]) : undefined;
